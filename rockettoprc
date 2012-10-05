@@ -1,0 +1,4 @@
+## This is the RocketTop config file
+## You can install it in either $HOME/.rockettoprc, /etc/rockettoprc, or
+## .rockettoprc or rockettoprc in the directory you run RocketTop from
+#api_key=YOUR_API_KEY

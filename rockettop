@@ -1,0 +1,239 @@
+#!/usr/bin/python
+
+import curses
+import json
+import operator
+import os
+import signal
+import sys
+import time
+import urllib
+import urllib2
+
+from datetime import datetime
+from optparse import OptionParser
+from urlparse import urlparse
+
+###--------------------------------------------------------------------------
+### Defaults
+###--------------------------------------------------------------------------
+api_host = "api.objectrocket.com"
+
+###--------------------------------------------------------------------------
+### handle shutdown gracefully
+###--------------------------------------------------------------------------
+def signal_handler(signal, frame):
+    curses.endwin()
+    print "Bye!"
+    sys.exit(0)
+signal.signal(signal.SIGINT, signal_handler)
+
+###--------------------------------------------------------------------------
+### check for config file
+###--------------------------------------------------------------------------
+def load_config():
+    config = {}
+    config_locations = [os.environ['HOME']+'/.', "/etc/", "./.", "./"]
+
+    for location in config_locations:
+        try:
+            f = open(location + "rockettoprc", 'r')
+
+            for line in f:
+                if '=' in line and not line.startswith("#"):
+                    key, val = line.split('=')
+                    config[key] = val.strip()
+        except IOError:
+            pass
+
+    return config
+
+###--------------------------------------------------------------------------
+### Main RocketTop class
+###--------------------------------------------------------------------------
+class RocketTop(object):
+    def __init__(self, api_key, refresh):
+        self.c = {}  ## container for performance counters
+        self.screen = curses.initscr()
+
+        self.api_key = api_key
+        self.refresh = refresh
+
+        curses.noecho()
+        curses.start_color()
+
+        #self.screen.keypad(1)
+        #self.screen.nodelay(1)
+
+        #curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLUE)
+        #curses.init_pair(2, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+
+        #self.screen.bkgd(curses.color_pair(1))
+        #self.screen.refresh()
+    
+    ###--------------------------------------------------------------------------
+    ### error handler
+    ###--------------------------------------------------------------------------
+    def error(self, error_msg):
+        curses.endwin()
+        print error_msg
+        sys.exit(1)
+
+    def timestring(self):
+        return datetime.now().strftime("%H:%M:%S")
+ 
+    def make_window(self):
+        self.win = curses.newwin(0, 0)
+        self.win.border(" ", " ", " ", " ", " ", " ", " ", " ")
+
+    def get_tty_size(self):
+        ## (height, width) tuple
+        self.height, self.width = self.screen.getmaxyx()
+
+    ###--------------------------------------------------------------------------
+    ### generates the header portion of the window
+    ###--------------------------------------------------------------------------
+    def print_box(self):
+        ## update our serverstatus cache
+        self.fetch_serverstatus()
+
+        status_instance = "instance: %s  zone: %s   [ctrl-c = quit]\n" % (self.ss['instance'], self.ss['zone'])
+        status_stats = "Stats: avg/flush: %sms last/flush: %sms\n" % (int(self.ss['backgroundFlushing']['average_ms']), self.ss['backgroundFlushing']['last_ms'])
+        status_net = "Network: conn: %s requests: %s KB/in: %s KB/out: %s\n" % (self.ss['connections']['current'], self.c['requests'], self.c['kbytes_in'], self.c['kbytes_out'])
+
+        status_commands = "Activity: cmds: %s delete: %s getmore: %s insert: %s query: %s update: %s\n" % (self.c['command'], self.c['delete'], self.c['getmore'], self.c['insert'], self.c['query'], self.c['update'])
+
+        header_name = "ObjectRocket Top"
+        header      = " - %s  Refresh: %ss  %s\n" % (api_host, self.refresh, self.timestring())
+        header_desc = "%-10s %-20s %-5s %-10s %-10s %s" % ("ID", "Namespace", "Secs", "Operation", "LockType", "Query")
+
+        self.win.addstr(header_name, curses.A_REVERSE)
+        self.win.addstr(header)
+        self.win.addstr(status_instance)
+        self.win.addstr(status_stats)
+        self.win.addstr(status_net)
+        self.win.addstr(status_commands)
+
+        padding = (self.width - len(header_desc)) - 1
+        if padding > 0:
+            pad = " " * padding
+            header_desc += pad
+
+        self.win.addstr(header_desc + "\n", curses.A_REVERSE)
+
+    ###--------------------------------------------------------------------------
+    ### get current_op data from API server
+    ###--------------------------------------------------------------------------
+    def fetch_data(self):
+        _payload = urllib.urlencode({'api_key': self.api_key})
+        url = "https://%s/current_op" % (api_host)
+
+        try:
+            data = json.loads(urllib2.urlopen(url, _payload).read())['data']['inprog']
+        except urllib2.HTTPError, ex:
+            if ex.code == 403:
+                self.error("Your API key appears to be invalid - please locate the correct code via the web interface at https://app.objectrocket.com")
+            else:
+                pass
+
+        for i in data:
+            if not i.has_key('secs_running'):
+               i['secs_running'] = 0
+
+        ## return queries sorted by run time
+        return sorted(data, key=lambda k: k['secs_running'], reverse = True)
+
+    ###--------------------------------------------------------------------------
+    ### get serverstatus data from API server
+    ###--------------------------------------------------------------------------
+    def fetch_serverstatus(self):
+        _payload = urllib.urlencode({'api_key': self.api_key})
+        url = "https://%s/serverStatus" % (api_host)
+
+        try:
+            self.ss = json.loads(urllib2.urlopen(url, _payload).read())['data']
+        except urllib2.HTTPError, ex:
+            if ex.code == 403:
+                self.error("Your API key appears to be invalid - please locate the correct code via the web interface at https://app.objectrocket.com")
+            else:
+                pass
+
+        try:
+            self.ss_lastrun
+        except (NameError, AttributeError): ## first run
+            self.ss_lastrun = self.ss
+
+        ss_lastrun = self.ss_lastrun
+        self.c['command'] = self.ss['opcounters']['command'] - ss_lastrun['opcounters']['command']
+        self.c['delete'] = self.ss['opcounters']['delete'] - ss_lastrun['opcounters']['delete']
+        self.c['getmore'] = self.ss['opcounters']['getmore'] - ss_lastrun['opcounters']['getmore']
+        self.c['insert'] = self.ss['opcounters']['insert'] - ss_lastrun['opcounters']['insert']
+        self.c['query'] = self.ss['opcounters']['query'] - ss_lastrun['opcounters']['query']
+        self.c['update'] = self.ss['opcounters']['update'] - ss_lastrun['opcounters']['update']
+
+        self.c['kbytes_in'] = int(self.ss['network']['bytesIn'] - ss_lastrun['network']['bytesIn'])/1000
+        self.c['kbytes_out'] = int(self.ss['network']['bytesOut'] - ss_lastrun['network']['bytesOut'])/1000
+        self.c['requests'] = self.ss['network']['numRequests'] - ss_lastrun['network']['numRequests']
+
+        self.ss_lastrun = self.ss
+   
+    ###--------------------------------------------------------------------------
+    ### display query portion of window
+    ###--------------------------------------------------------------------------
+    def print_data(self):
+        _data = self.fetch_data()
+
+        for i in _data[0:self.height-6]:
+            if not i.has_key('connectionId'):
+                i['connectionId'] = "null"
+
+            if not i['ns']: i['ns'] = "none"
+            if not i.has_key('lockType'): i['lockType'] = "none"
+
+            self.win.addnstr("%-10s %-20s %-5s %-10s %-10s %s\n" % (i['connectionId'], i['ns'], i['secs_running'], i['op'], i['lockType'], i['query']), self.width)
+
+        self.win.refresh()
+
+    def run(self):
+        self.make_window()
+
+        while True:
+            self.get_tty_size()
+            self.print_box()
+            self.print_data()
+
+            time.sleep(self.refresh)
+            self.win.clear()
+
+if __name__ == "__main__":
+    parser = OptionParser()
+    parser.add_option("--api_key", dest="api_key", help="ObjectRocket API Key")
+    parser.add_option("--refresh", dest="refresh", help="Refresh time in seconds", default=5)
+    (options, args) = parser.parse_args()
+
+    config = load_config()
+    found_api_key = None
+
+    if options.api_key:
+        found_api_key = options.api_key
+    elif config.has_key('api_key'):
+        found_api_key = config['api_key']
+    else:
+        print "No API key specified, or found in rockettoprc config file.  Exiting."
+        sys.exit(1)
+
+    print "API Key = %s, querying api server.." % found_api_key
+
+    r = RocketTop(api_key = found_api_key, refresh = options.refresh)
+
+    ###--------------------------------------------------------------------------
+    ### wrap everything in a try/catch as a last ditch exception handler
+    ### curses will hork terminal settings if you don't call endwin()
+    ###--------------------------------------------------------------------------
+    try:
+        r.run()
+    except Exception, ex:
+        curses.endwin()
+        print "An error has occurred - generally these are transient, and re-running rockettop will fix these.  The exception was:\n"
+        print ex
+        print "\nIf that doesn't work, please contact us at support@objectrocket.com with this output.  Sorry for the inconvenience!"
