@@ -3,7 +3,7 @@ RocketTop is a real-time statistics viewer for ObjectRocket, built to look
 similar to the popular Unix "top" utility.
 <br><br>
 
-Requires: <a href=http://www.python.org/>python</a>
+Requires: <a href=http://www.python.org/>python</a><br>
           curses support (installed by default in Linux/Unix/Mac OSX)
 
 <h2>Usage</h2>
