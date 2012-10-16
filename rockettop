@@ -208,7 +208,7 @@ class RocketTop(object):
 if __name__ == "__main__":
     parser = OptionParser()
     parser.add_option("--api_key", dest="api_key", help="ObjectRocket API Key")
-    parser.add_option("--refresh", dest="refresh", help="Refresh time in seconds", default=5)
+    parser.add_option("--refresh", dest="refresh", type="int", help="Refresh time in seconds", default=5)
     (options, args) = parser.parse_args()
 
     config = load_config()
