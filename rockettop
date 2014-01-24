@@ -9,6 +9,7 @@ import sys
 import time
 import urllib
 import urllib2
+import traceback
 
 from datetime import datetime
 from optparse import OptionParser
@@ -183,14 +184,22 @@ class RocketTop(object):
     def print_data(self):
         _data = self.fetch_data()
 
-        for i in _data[0:self.height-6]:
+        x = 1
+        maxy = self.height-6
+        for i in _data[0:maxy]:
             if not i.has_key('connectionId'):
                 i['connectionId'] = "null"
 
             if not i['ns']: i['ns'] = "none"
             if not i.has_key('lockType'): i['lockType'] = "none"
 
-            self.win.addnstr("%-10s %-20s %-5s %-10s %-10s %s\n" % (i['connectionId'], i['ns'], i['secs_running'], i['op'], i['lockType'], i['query']), self.width)
+            dataformat = "%-10s %-20s %-5s %-10s %-10s %s"
+
+            x += 1
+            if x <= maxy:
+                dataformat += "\n"
+
+            self.win.addnstr(dataformat % (i['connectionId'], i['ns'], i['secs_running'], i['op'], i['lockType'], i['query']), self.width)
 
         self.win.refresh()
 
@@ -234,6 +243,7 @@ if __name__ == "__main__":
         r.run()
     except Exception, ex:
         curses.endwin()
+        tb = traceback.format_exc()
         print "An error has occurred - generally these are transient, and re-running rockettop will fix these.  The exception was:\n"
-        print ex
+        print tb
         print "\nIf that doesn't work, please contact us at support@objectrocket.com with this output.  Sorry for the inconvenience!"
